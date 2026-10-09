@@ -1,0 +1,5 @@
+{
+  "plugins": ["typescript", "import", "unicorn", "react", "nextjs"],
+  "categories": { "correctness": "error" },
+  "ignorePatterns": [".next", "node_modules", "drizzle"]
+}
