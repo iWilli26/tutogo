@@ -1,5 +1,13 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  boolean,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 
 export const ROLES = ["TUTOR", "TUTEE", "ADMIN"] as const;
 export type Role = (typeof ROLES)[number];
@@ -31,41 +39,39 @@ export type AnomalyType = (typeof ANOMALY_TYPES)[number];
 export const ANOMALY_STATUSES = ["OPEN", "RESOLVED", "DISMISSED"] as const;
 export type AnomalyStatus = (typeof ANOMALY_STATUSES)[number];
 
-const timestamp = (name: string) =>
-  integer(name, { mode: "timestamp_ms" })
-    .notNull()
-    .default(sql`(unixepoch() * 1000)`);
+const instant = (name: string) => timestamp(name, { withTimezone: true, precision: 3 });
+const createdInstant = (name: string) => instant(name).notNull().defaultNow();
 
-export const users = sqliteTable("users", {
+export const users = pgTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
   name: text("name").notNull(),
   role: text("role", { enum: ROLES }).notNull(),
   passwordHash: text("password_hash").notNull(),
-  active: integer("active", { mode: "boolean" }).notNull().default(true),
-  createdAt: timestamp("created_at"),
+  active: boolean("active").notNull().default(true),
+  createdAt: createdInstant("created_at"),
 });
 
-export const tutorProfiles = sqliteTable("tutor_profiles", {
+export const tutorProfiles = pgTable("tutor_profiles", {
   userId: text("user_id")
     .primaryKey()
     .references(() => users.id),
   promo: text("promo"),
 });
 
-export const tuteeProfiles = sqliteTable("tutee_profiles", {
+export const tuteeProfiles = pgTable("tutee_profiles", {
   userId: text("user_id")
     .primaryKey()
     .references(() => users.id),
   promo: text("promo"),
 });
 
-export const subjects = sqliteTable("subjects", {
+export const subjects = pgTable("subjects", {
   id: text("id").primaryKey(),
   name: text("name").notNull().unique(),
 });
 
-export const tutorTuteeRelationships = sqliteTable(
+export const tutorTuteeRelationships = pgTable(
   "tutor_tutee_relationships",
   {
     id: text("id").primaryKey(),
@@ -75,13 +81,13 @@ export const tutorTuteeRelationships = sqliteTable(
     tuteeId: text("tutee_id")
       .notNull()
       .references(() => users.id),
-    active: integer("active", { mode: "boolean" }).notNull().default(true),
-    createdAt: timestamp("created_at"),
+    active: boolean("active").notNull().default(true),
+    createdAt: createdInstant("created_at"),
   },
   (t) => [uniqueIndex("relationship_pair_idx").on(t.tutorId, t.tuteeId)],
 );
 
-export const sessions = sqliteTable(
+export const sessions = pgTable(
   "sessions",
   {
     id: text("id").primaryKey(),
@@ -96,14 +102,14 @@ export const sessions = sqliteTable(
       .notNull()
       .references(() => subjects.id),
     status: text("status", { enum: SESSION_STATUSES }).notNull().default("PENDING"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: instant("created_at").notNull(),
     tutorDurationMin: integer("tutor_duration_min"),
-    tutorDeclaredAt: integer("tutor_declared_at", { mode: "timestamp_ms" }),
+    tutorDeclaredAt: instant("tutor_declared_at"),
     comparison: text("comparison", { enum: COMPARISON_RESULTS }),
     statusReason: text("status_reason"),
     validatedMinutes: integer("validated_minutes").notNull().default(0),
     decidedBy: text("decided_by").references(() => users.id),
-    decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+    decidedAt: instant("decided_at"),
   },
   (t) => [
     index("sessions_tutor_idx").on(t.tutorId, t.status),
@@ -114,7 +120,7 @@ export const sessions = sqliteTable(
   ],
 );
 
-export const sessionConfirmations = sqliteTable("session_confirmations", {
+export const sessionConfirmations = pgTable("session_confirmations", {
   id: text("id").primaryKey(),
   sessionId: text("session_id")
     .notNull()
@@ -123,12 +129,12 @@ export const sessionConfirmations = sqliteTable("session_confirmations", {
   tuteeId: text("tutee_id")
     .notNull()
     .references(() => users.id),
-  participated: integer("participated", { mode: "boolean" }).notNull(),
+  participated: boolean("participated").notNull(),
   durationBucket: text("duration_bucket", { enum: DURATION_BUCKETS }),
-  confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }).notNull(),
+  confirmedAt: instant("confirmed_at").notNull(),
 });
 
-export const anomalies = sqliteTable(
+export const anomalies = pgTable(
   "anomalies",
   {
     id: text("id").primaryKey(),
@@ -138,18 +144,18 @@ export const anomalies = sqliteTable(
     userId: text("user_id").references(() => users.id),
     details: text("details").notNull(),
     status: text("status", { enum: ANOMALY_STATUSES }).notNull().default("OPEN"),
-    createdAt: timestamp("created_at"),
+    createdAt: createdInstant("created_at"),
     resolvedBy: text("resolved_by").references(() => users.id),
-    resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+    resolvedAt: instant("resolved_at"),
   },
   (t) => [index("anomalies_status_idx").on(t.status)],
 );
 
-export const auditLogs = sqliteTable(
+export const auditLogs = pgTable(
   "audit_logs",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    at: timestamp("at"),
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    at: createdInstant("at"),
     actorId: text("actor_id").references(() => users.id),
     action: text("action").notNull(),
     entityType: text("entity_type").notNull(),

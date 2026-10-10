@@ -9,13 +9,13 @@ import { getAdminStats, getLeaderboard } from "@/server/stats";
 
 const MEDALS = ["🥇", "🥈", "🥉"];
 
-export default function AdminHome() {
+export default async function AdminHome() {
   const db = getDb();
-  scanStaleSessions(db);
-  const stats = getAdminStats(db);
-  const board = getLeaderboard(db);
-  const review = listSessionViews(db, { statuses: ["TO_REVIEW"], limit: 10 });
-  const anomalies = listAnomalyViews(db, "OPEN").slice(0, 5);
+  await scanStaleSessions(db);
+  const stats = await getAdminStats(db);
+  const board = await getLeaderboard(db);
+  const review = await listSessionViews(db, { statuses: ["TO_REVIEW"], limit: 10 });
+  const anomalies = (await listAnomalyViews(db, "OPEN")).slice(0, 5);
 
   const tiles: [string, string][] = [
     ["Tuteurs", String(stats.tutors)],

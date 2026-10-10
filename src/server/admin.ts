@@ -16,8 +16,8 @@ import { hashPassword } from "@/server/auth/password";
 import { listSessionViews } from "@/server/queries";
 import { BUCKET_RANGES } from "@/domain/duration";
 
-function assertAdmin(db: Executor, adminId: string): void {
-  const admin = db.select().from(users).where(eq(users.id, adminId)).get();
+async function assertAdmin(db: Executor, adminId: string): Promise<void> {
+  const [admin] = await db.select().from(users).where(eq(users.id, adminId));
   if (admin?.role !== "ADMIN" || !admin.active)
     throw new DomainError("Action réservée aux administrateurs.");
 }
@@ -29,26 +29,25 @@ export interface NewUser {
   password: string;
 }
 
-export function createUser(db: Db, adminId: string, input: NewUser, now = new Date()) {
-  return db.transaction((tx) => {
-    assertAdmin(tx, adminId);
+export async function createUser(db: Db, adminId: string, input: NewUser, now = new Date()) {
+  return db.transaction(async (tx) => {
+    await assertAdmin(tx, adminId);
     const email = input.email.trim().toLowerCase();
-    if (tx.select().from(users).where(eq(users.email, email)).get()) {
+    const [taken] = await tx.select().from(users).where(eq(users.email, email));
+    if (taken) {
       throw new DomainError("Un compte existe déjà avec cet e-mail.");
     }
     const id = randomUUID();
-    tx.insert(users)
-      .values({
-        id,
-        email,
-        name: input.name.trim(),
-        role: input.role,
-        passwordHash: hashPassword(input.password),
-      })
-      .run();
-    if (input.role === "TUTOR") tx.insert(tutorProfiles).values({ userId: id }).run();
-    if (input.role === "TUTEE") tx.insert(tuteeProfiles).values({ userId: id }).run();
-    logAudit(
+    await tx.insert(users).values({
+      id,
+      email,
+      name: input.name.trim(),
+      role: input.role,
+      passwordHash: hashPassword(input.password),
+    });
+    if (input.role === "TUTOR") await tx.insert(tutorProfiles).values({ userId: id });
+    if (input.role === "TUTEE") await tx.insert(tuteeProfiles).values({ userId: id });
+    await logAudit(
       tx,
       {
         actorId: adminId,
@@ -63,7 +62,7 @@ export function createUser(db: Db, adminId: string, input: NewUser, now = new Da
   });
 }
 
-export function setUserActive(
+export async function setUserActive(
   db: Db,
   adminId: string,
   userId: string,
@@ -72,10 +71,10 @@ export function setUserActive(
 ) {
   if (adminId === userId && !active)
     throw new DomainError("Tu ne peux pas désactiver ton propre compte.");
-  db.transaction((tx) => {
-    assertAdmin(tx, adminId);
-    tx.update(users).set({ active }).where(eq(users.id, userId)).run();
-    logAudit(
+  await db.transaction(async (tx) => {
+    await assertAdmin(tx, adminId);
+    await tx.update(users).set({ active }).where(eq(users.id, userId));
+    await logAudit(
       tx,
       {
         actorId: adminId,
@@ -88,27 +87,25 @@ export function setUserActive(
   });
 }
 
-export function linkTutorTutee(
+export async function linkTutorTutee(
   db: Db,
   adminId: string,
   tutorId: string,
   tuteeId: string,
   now = new Date(),
 ) {
-  db.transaction((tx) => {
-    assertAdmin(tx, adminId);
-    const tutor = tx
+  await db.transaction(async (tx) => {
+    await assertAdmin(tx, adminId);
+    const [tutor] = await tx
       .select()
       .from(users)
-      .where(and(eq(users.id, tutorId), eq(users.role, "TUTOR")))
-      .get();
-    const tutee = tx
+      .where(and(eq(users.id, tutorId), eq(users.role, "TUTOR")));
+    const [tutee] = await tx
       .select()
       .from(users)
-      .where(and(eq(users.id, tuteeId), eq(users.role, "TUTEE")))
-      .get();
+      .where(and(eq(users.id, tuteeId), eq(users.role, "TUTEE")));
     if (!tutor || !tutee) throw new DomainError("Il faut un tuteur et un tutoré valides.");
-    const existing = tx
+    const [existing] = await tx
       .select()
       .from(tutorTuteeRelationships)
       .where(
@@ -116,18 +113,17 @@ export function linkTutorTutee(
           eq(tutorTuteeRelationships.tutorId, tutorId),
           eq(tutorTuteeRelationships.tuteeId, tuteeId),
         ),
-      )
-      .get();
+      );
     const id = existing?.id ?? randomUUID();
     if (existing) {
-      tx.update(tutorTuteeRelationships)
+      await tx
+        .update(tutorTuteeRelationships)
         .set({ active: true })
-        .where(eq(tutorTuteeRelationships.id, id))
-        .run();
+        .where(eq(tutorTuteeRelationships.id, id));
     } else {
-      tx.insert(tutorTuteeRelationships).values({ id, tutorId, tuteeId }).run();
+      await tx.insert(tutorTuteeRelationships).values({ id, tutorId, tuteeId });
     }
-    logAudit(
+    await logAudit(
       tx,
       {
         actorId: adminId,
@@ -141,19 +137,19 @@ export function linkTutorTutee(
   });
 }
 
-export function unlinkTutorTutee(
+export async function unlinkTutorTutee(
   db: Db,
   adminId: string,
   relationshipId: string,
   now = new Date(),
 ) {
-  db.transaction((tx) => {
-    assertAdmin(tx, adminId);
-    tx.update(tutorTuteeRelationships)
+  await db.transaction(async (tx) => {
+    await assertAdmin(tx, adminId);
+    await tx
+      .update(tutorTuteeRelationships)
       .set({ active: false })
-      .where(eq(tutorTuteeRelationships.id, relationshipId))
-      .run();
-    logAudit(
+      .where(eq(tutorTuteeRelationships.id, relationshipId));
+    await logAudit(
       tx,
       {
         actorId: adminId,
@@ -166,16 +162,17 @@ export function unlinkTutorTutee(
   });
 }
 
-export function addSubject(db: Db, adminId: string, name: string, now = new Date()) {
-  db.transaction((tx) => {
-    assertAdmin(tx, adminId);
+export async function addSubject(db: Db, adminId: string, name: string, now = new Date()) {
+  await db.transaction(async (tx) => {
+    await assertAdmin(tx, adminId);
     const trimmed = name.trim();
-    if (tx.select().from(subjects).where(eq(subjects.name, trimmed)).get()) {
+    const [taken] = await tx.select().from(subjects).where(eq(subjects.name, trimmed));
+    if (taken) {
       throw new DomainError("Cette matière existe déjà.");
     }
     const id = randomUUID();
-    tx.insert(subjects).values({ id, name: trimmed }).run();
-    logAudit(
+    await tx.insert(subjects).values({ id, name: trimmed });
+    await logAudit(
       tx,
       {
         actorId: adminId,
@@ -189,20 +186,20 @@ export function addSubject(db: Db, adminId: string, name: string, now = new Date
   });
 }
 
-export function closeAnomaly(
+export async function closeAnomaly(
   db: Db,
   adminId: string,
   anomalyId: string,
   status: "RESOLVED" | "DISMISSED",
   now = new Date(),
 ) {
-  db.transaction((tx) => {
-    assertAdmin(tx, adminId);
-    tx.update(anomalies)
+  await db.transaction(async (tx) => {
+    await assertAdmin(tx, adminId);
+    await tx
+      .update(anomalies)
       .set({ status, resolvedBy: adminId, resolvedAt: now })
-      .where(eq(anomalies.id, anomalyId))
-      .run();
-    logAudit(
+      .where(eq(anomalies.id, anomalyId));
+    await logAudit(
       tx,
       { actorId: adminId, action: `ANOMALY_${status}`, entityType: "anomaly", entityId: anomalyId },
       now,
@@ -216,8 +213,8 @@ function csvCell(value: string | number | null): string {
   return `"${safe.replaceAll('"', '""')}"`;
 }
 
-export function exportSessionsCsv(db: Db, adminId: string): string {
-  assertAdmin(db, adminId);
+export async function exportSessionsCsv(db: Db, adminId: string): Promise<string> {
+  await assertAdmin(db, adminId);
   const header = [
     "id",
     "code",
@@ -232,7 +229,7 @@ export function exportSessionsCsv(db: Db, adminId: string): string {
     "comparaison",
     "motif",
   ];
-  const rows = listSessionViews(db, { limit: 100_000 }).map((v) => [
+  const rows = (await listSessionViews(db, { limit: 100_000 })).map((v) => [
     v.session.id,
     v.session.code,
     v.tutorName,

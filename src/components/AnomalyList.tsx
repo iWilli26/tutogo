@@ -5,7 +5,7 @@ import { secondaryButton } from "@/components/ui";
 import { ANOMALY_LABELS } from "@/domain/status";
 import type { listAnomalyViews } from "@/server/queries";
 
-type AnomalyView = ReturnType<typeof listAnomalyViews>[number];
+type AnomalyView = Awaited<ReturnType<typeof listAnomalyViews>>[number];
 
 export function AnomalyList({ items }: { items: AnomalyView[] }) {
   if (items.length === 0) return <p className="text-slate-500">Aucune anomalie.</p>;

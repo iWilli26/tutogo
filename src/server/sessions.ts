@@ -43,9 +43,14 @@ export interface PrepareInput {
   subjectId: string;
 }
 
-export function prepareSession(db: Db, tutorId: string, input: PrepareInput, now = new Date()) {
-  return db.transaction((tx) => {
-    const relationship = tx
+export async function prepareSession(
+  db: Db,
+  tutorId: string,
+  input: PrepareInput,
+  now = new Date(),
+) {
+  return db.transaction(async (tx) => {
+    const [relationship] = await tx
       .select({ id: tutorTuteeRelationships.id })
       .from(tutorTuteeRelationships)
       .innerJoin(users, eq(users.id, tutorTuteeRelationships.tuteeId))
@@ -57,12 +62,12 @@ export function prepareSession(db: Db, tutorId: string, input: PrepareInput, now
           eq(users.active, true),
         ),
       )
-      .get();
+      .for("update", { of: tutorTuteeRelationships });
     if (!relationship) throw new DomainError("Ce tutoré n'est pas associé à ton compte.");
-    const subject = tx.select().from(subjects).where(eq(subjects.id, input.subjectId)).get();
+    const [subject] = await tx.select().from(subjects).where(eq(subjects.id, input.subjectId));
     if (!subject) throw new DomainError("Matière inconnue.");
 
-    const existing = tx
+    const [existing] = await tx
       .select()
       .from(sessions)
       .where(
@@ -72,10 +77,9 @@ export function prepareSession(db: Db, tutorId: string, input: PrepareInput, now
           eq(sessions.subjectId, input.subjectId),
           isNull(sessions.tutorDeclaredAt),
         ),
-      )
-      .get();
+      );
     if (existing) {
-      raiseAnomaly(
+      await raiseAnomaly(
         tx,
         {
           type: "DUPLICATE_ATTEMPT",
@@ -89,29 +93,24 @@ export function prepareSession(db: Db, tutorId: string, input: PrepareInput, now
       return { session: existing, reused: true };
     }
 
-    const openCodes = new Set(
-      tx
-        .select({ code: sessions.code })
-        .from(sessions)
-        .where(and(eq(sessions.tutorId, tutorId), isNull(sessions.tutorDeclaredAt)))
-        .all()
-        .map((r) => r.code),
-    );
+    const open = await tx
+      .select({ code: sessions.code })
+      .from(sessions)
+      .where(and(eq(sessions.tutorId, tutorId), isNull(sessions.tutorDeclaredAt)));
+    const openCodes = new Set(open.map((r) => r.code));
     let code = generateCode();
     while (openCodes.has(code)) code = generateCode();
 
     const id = randomUUID();
-    tx.insert(sessions)
-      .values({
-        id,
-        code,
-        tutorId,
-        tuteeId: input.tuteeId,
-        subjectId: input.subjectId,
-        createdAt: now,
-      })
-      .run();
-    logAudit(
+    await tx.insert(sessions).values({
+      id,
+      code,
+      tutorId,
+      tuteeId: input.tuteeId,
+      subjectId: input.subjectId,
+      createdAt: now,
+    });
+    await logAudit(
       tx,
       {
         actorId: tutorId,
@@ -122,7 +121,7 @@ export function prepareSession(db: Db, tutorId: string, input: PrepareInput, now
       },
       now,
     );
-    const session = tx.select().from(sessions).where(eq(sessions.id, id)).get();
+    const [session] = await tx.select().from(sessions).where(eq(sessions.id, id));
     if (!session) throw new Error("Session insert failed");
     return { session, reused: false };
   });
@@ -133,10 +132,15 @@ export interface DeclareInput {
   durationMin: number;
 }
 
-export function declareSession(db: Db, tutorId: string, input: DeclareInput, now = new Date()) {
-  const outcome = db.transaction((tx) => {
+export async function declareSession(
+  db: Db,
+  tutorId: string,
+  input: DeclareInput,
+  now = new Date(),
+) {
+  const outcome = await db.transaction(async (tx) => {
     const code = normalizeCode(input.code);
-    const session = tx
+    const [session] = await tx
       .select()
       .from(sessions)
       .where(
@@ -146,9 +150,9 @@ export function declareSession(db: Db, tutorId: string, input: DeclareInput, now
           isNull(sessions.tutorDeclaredAt),
         ),
       )
-      .get();
+      .for("update");
     if (!session) {
-      logAudit(
+      await logAudit(
         tx,
         { actorId: tutorId, action: "DECLARATION_BAD_CODE", entityType: "user", entityId: tutorId },
         now,
@@ -167,7 +171,7 @@ export function declareSession(db: Db, tutorId: string, input: DeclareInput, now
     }
     const elapsedMin = (now.getTime() - session.createdAt.getTime()) / 60_000;
     if (duration > elapsedMin + ELAPSED_TOLERANCE_MIN) {
-      raiseAnomaly(
+      await raiseAnomaly(
         tx,
         {
           type: "DURATION_EXCEEDS_ELAPSED",
@@ -183,11 +187,11 @@ export function declareSession(db: Db, tutorId: string, input: DeclareInput, now
       };
     }
 
-    tx.update(sessions)
+    await tx
+      .update(sessions)
       .set({ tutorDurationMin: duration, tutorDeclaredAt: now })
-      .where(eq(sessions.id, session.id))
-      .run();
-    logAudit(
+      .where(eq(sessions.id, session.id));
+    await logAudit(
       tx,
       {
         actorId: tutorId,
@@ -198,9 +202,9 @@ export function declareSession(db: Db, tutorId: string, input: DeclareInput, now
       },
       now,
     );
-    const declared = tx.select().from(sessions).where(eq(sessions.id, session.id)).get();
+    const [declared] = await tx.select().from(sessions).where(eq(sessions.id, session.id));
     if (!declared) throw new Error("Session vanished");
-    runDeclarationDetectors(tx, declared, now);
+    await runDeclarationDetectors(tx, declared, now);
     return { session: declared };
   });
   if ("error" in outcome) throw new DomainError(outcome.error);
@@ -213,38 +217,40 @@ export interface ConfirmInput {
   bucket: DurationBucket | null;
 }
 
-export function confirmSession(db: Db, tuteeId: string, input: ConfirmInput, now = new Date()) {
-  return db.transaction((tx) => {
-    const session = tx
+export async function confirmSession(
+  db: Db,
+  tuteeId: string,
+  input: ConfirmInput,
+  now = new Date(),
+) {
+  return db.transaction(async (tx) => {
+    const [session] = await tx
       .select()
       .from(sessions)
       .where(and(eq(sessions.id, input.sessionId), eq(sessions.tuteeId, tuteeId)))
-      .get();
+      .for("update");
     if (!session || session.tutorDeclaredAt === null || session.tutorDurationMin === null) {
       throw new DomainError("Aucune séance à confirmer.");
     }
-    const already = tx
+    const [already] = await tx
       .select({ id: sessionConfirmations.id })
       .from(sessionConfirmations)
-      .where(eq(sessionConfirmations.sessionId, session.id))
-      .get();
+      .where(eq(sessionConfirmations.sessionId, session.id));
     if (already) throw new DomainError("Cette séance a déjà été confirmée.");
     if (input.participated && !input.bucket) {
       throw new DomainError("Indique la durée approximative de la séance.");
     }
     const bucket = input.participated ? input.bucket : null;
 
-    tx.insert(sessionConfirmations)
-      .values({
-        id: randomUUID(),
-        sessionId: session.id,
-        tuteeId,
-        participated: input.participated,
-        durationBucket: bucket,
-        confirmedAt: now,
-      })
-      .run();
-    logAudit(
+    await tx.insert(sessionConfirmations).values({
+      id: randomUUID(),
+      sessionId: session.id,
+      tuteeId,
+      participated: input.participated,
+      durationBucket: bucket,
+      confirmedAt: now,
+    });
+    await logAudit(
       tx,
       {
         actorId: tuteeId,
@@ -260,9 +266,9 @@ export function confirmSession(db: Db, tuteeId: string, input: ConfirmInput, now
       participated: input.participated,
       bucket,
     });
-    raiseComparisonAnomalies(tx, session, comparison.result, comparison.reason, now);
+    await raiseComparisonAnomalies(tx, session, comparison.result, comparison.reason, now);
     if (now.getTime() - session.tutorDeclaredAt.getTime() < INSTANT_CONFIRMATION_MS) {
-      raiseAnomaly(
+      await raiseAnomaly(
         tx,
         {
           type: "INSTANT_CONFIRMATION",
@@ -275,7 +281,7 @@ export function confirmSession(db: Db, tuteeId: string, input: ConfirmInput, now
       );
     }
 
-    const openAnomalies = openAnomaliesForSession(tx, session.id);
+    const openAnomalies = await openAnomaliesForSession(tx, session.id);
     const validated = comparison.result === "MATCH" && openAnomalies.length === 0;
     const reason = validated
       ? comparison.reason
@@ -285,16 +291,16 @@ export function confirmSession(db: Db, tuteeId: string, input: ConfirmInput, now
         ]
           .filter(Boolean)
           .join(" ");
-    tx.update(sessions)
+    await tx
+      .update(sessions)
       .set({
         status: validated ? "VALIDATED" : "TO_REVIEW",
         comparison: comparison.result,
         statusReason: reason,
         validatedMinutes: validated ? comparison.creditedMinutes : 0,
       })
-      .where(eq(sessions.id, session.id))
-      .run();
-    logAudit(
+      .where(eq(sessions.id, session.id));
+    await logAudit(
       tx,
       {
         actorId: null,
@@ -305,23 +311,23 @@ export function confirmSession(db: Db, tuteeId: string, input: ConfirmInput, now
       },
       now,
     );
-    flagUnusualTutor(tx, session.tutorId, session.id, now);
-    const updated = tx.select().from(sessions).where(eq(sessions.id, session.id)).get();
+    await flagUnusualTutor(tx, session.tutorId, session.id, now);
+    const [updated] = await tx.select().from(sessions).where(eq(sessions.id, session.id));
     if (!updated) throw new Error("Session vanished");
     return updated;
   });
 }
 
-function raiseComparisonAnomalies(
+async function raiseComparisonAnomalies(
   x: Executor,
   session: typeof sessions.$inferSelect,
   result: "MATCH" | "MISMATCH" | "TUTEE_DENIED",
   reason: string,
   now: Date,
-): void {
+): Promise<void> {
   if (result === "MATCH") return;
   const type = result === "TUTEE_DENIED" ? "TUTEE_DENIED" : "DECLARATION_MISMATCH";
-  raiseAnomaly(
+  await raiseAnomaly(
     x,
     {
       type,
@@ -334,8 +340,13 @@ function raiseComparisonAnomalies(
   );
 }
 
-function flagUnusualTutor(x: Executor, tutorId: string, sessionId: string, now: Date): void {
-  const recent = x
+async function flagUnusualTutor(
+  x: Executor,
+  tutorId: string,
+  sessionId: string,
+  now: Date,
+): Promise<void> {
+  const recent = await x
     .select({ status: sessions.status })
     .from(sessions)
     .where(
@@ -345,11 +356,10 @@ function flagUnusualTutor(x: Executor, tutorId: string, sessionId: string, now: 
       ),
     )
     .orderBy(desc(sessions.tutorDeclaredAt))
-    .limit(RECENT_WINDOW)
-    .all();
+    .limit(RECENT_WINDOW);
   const flagged = recent.filter((s) => s.status !== "VALIDATED").length;
   if (flagged >= FLAGGED_THRESHOLD) {
-    raiseAnomaly(
+    await raiseAnomaly(
       x,
       {
         type: "UNUSUAL_ACCOUNT",
@@ -370,12 +380,21 @@ export interface AdminDecision {
   note: string;
 }
 
-export function decideSession(db: Db, adminId: string, input: AdminDecision, now = new Date()) {
-  return db.transaction((tx) => {
-    const admin = tx.select().from(users).where(eq(users.id, adminId)).get();
+export async function decideSession(
+  db: Db,
+  adminId: string,
+  input: AdminDecision,
+  now = new Date(),
+) {
+  return db.transaction(async (tx) => {
+    const [admin] = await tx.select().from(users).where(eq(users.id, adminId));
     if (admin?.role !== "ADMIN" || !admin.active)
       throw new DomainError("Action réservée aux administrateurs.");
-    const session = tx.select().from(sessions).where(eq(sessions.id, input.sessionId)).get();
+    const [session] = await tx
+      .select()
+      .from(sessions)
+      .where(eq(sessions.id, input.sessionId))
+      .for("update");
     if (!session) throw new DomainError("Séance introuvable.");
     if (!input.note.trim()) throw new DomainError("Une justification est obligatoire.");
 
@@ -392,7 +411,8 @@ export function decideSession(db: Db, adminId: string, input: AdminDecision, now
       }
     }
     const status = input.decision === "VALIDATE" ? "VALIDATED" : "REFUSED";
-    tx.update(sessions)
+    await tx
+      .update(sessions)
       .set({
         status,
         validatedMinutes: minutes,
@@ -400,9 +420,8 @@ export function decideSession(db: Db, adminId: string, input: AdminDecision, now
         decidedBy: adminId,
         decidedAt: now,
       })
-      .where(eq(sessions.id, session.id))
-      .run();
-    logAudit(
+      .where(eq(sessions.id, session.id));
+    await logAudit(
       tx,
       {
         actorId: adminId,
@@ -413,7 +432,7 @@ export function decideSession(db: Db, adminId: string, input: AdminDecision, now
       },
       now,
     );
-    const updated = tx.select().from(sessions).where(eq(sessions.id, session.id)).get();
+    const [updated] = await tx.select().from(sessions).where(eq(sessions.id, session.id));
     if (!updated) throw new Error("Session vanished");
     return updated;
   });

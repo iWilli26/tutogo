@@ -6,7 +6,7 @@ import { listSessionViews } from "@/server/queries";
 
 export default async function TutorHistory() {
   const tutor = await requireRole("TUTOR");
-  const views = listSessionViews(getDb(), { tutorId: tutor.id });
+  const views = await listSessionViews(getDb(), { tutorId: tutor.id });
   return (
     <Card>
       <h1 className="mb-5 text-2xl font-extrabold">Mon historique</h1>

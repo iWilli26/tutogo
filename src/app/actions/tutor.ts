@@ -19,7 +19,7 @@ export async function prepareAction(_prev: ActionState, formData: FormData): Pro
   if (!parsed.success) return { error: "Choisis un tutoré et une matière." };
   let sessionId: string;
   try {
-    sessionId = prepareSession(getDb(), tutor.id, parsed.data).session.id;
+    sessionId = (await prepareSession(getDb(), tutor.id, parsed.data)).session.id;
   } catch (e) {
     return toState(e);
   }
@@ -32,7 +32,7 @@ export async function declareAction(_prev: ActionState, formData: FormData): Pro
   if (!parsed.success) return INVALID_INPUT;
   let sessionId: string;
   try {
-    sessionId = declareSession(getDb(), tutor.id, parsed.data).id;
+    sessionId = (await declareSession(getDb(), tutor.id, parsed.data)).id;
   } catch (e) {
     return toState(e);
   }

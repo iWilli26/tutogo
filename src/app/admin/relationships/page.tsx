@@ -4,10 +4,11 @@ import { LinkForm, SubjectForm } from "@/components/AdminForms";
 import { Card, secondaryButton } from "@/components/ui";
 import { listRelationships, listSubjects, listUsers } from "@/server/queries";
 
-export default function RelationshipsPage() {
+export default async function RelationshipsPage() {
   const db = getDb();
-  const users = listUsers(db).filter((u) => u.active);
-  const relationships = listRelationships(db);
+  const users = (await listUsers(db)).filter((u) => u.active);
+  const relationships = await listRelationships(db);
+  const subjects = await listSubjects(db);
   return (
     <>
       <Card>
@@ -40,11 +41,7 @@ export default function RelationshipsPage() {
       </Card>
       <Card>
         <h2 className="mb-4 text-lg font-bold">Matières</h2>
-        <p className="mb-4 text-sm text-slate-600">
-          {listSubjects(db)
-            .map((s) => s.name)
-            .join(" · ")}
-        </p>
+        <p className="mb-4 text-sm text-slate-600">{subjects.map((s) => s.name).join(" · ")}</p>
         <SubjectForm />
       </Card>
     </>

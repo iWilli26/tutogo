@@ -6,8 +6,8 @@ import { listUsers } from "@/server/queries";
 
 const ROLE_LABEL = { TUTOR: "Tuteur", TUTEE: "Tutoré", ADMIN: "Admin" } as const;
 
-export default function UsersPage() {
-  const all = listUsers(getDb());
+export default async function UsersPage() {
+  const all = await listUsers(getDb());
   return (
     <>
       <Card>

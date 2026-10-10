@@ -13,7 +13,7 @@ export default async function AdminSessions({
 }) {
   const { status } = await searchParams;
   const filter = SESSION_STATUSES.find((s) => s === status) as SessionStatus | undefined;
-  const views = listSessionViews(getDb(), filter ? { statuses: [filter] } : {});
+  const views = await listSessionViews(getDb(), filter ? { statuses: [filter] } : {});
   return (
     <Card>
       <h1 className="mb-4 text-2xl font-extrabold">Séances</h1>

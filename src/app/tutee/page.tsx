@@ -8,7 +8,7 @@ import { listSessionViews } from "@/server/queries";
 
 export default async function TuteeHome() {
   const tutee = await requireRole("TUTEE");
-  const views = listSessionViews(getDb(), { tuteeId: tutee.id });
+  const views = await listSessionViews(getDb(), { tuteeId: tutee.id });
   const toConfirm = views.filter(
     (v) => v.session.tutorDeclaredAt !== null && v.tuteeParticipated === null,
   );

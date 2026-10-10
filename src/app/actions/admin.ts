@@ -29,7 +29,7 @@ export async function decideAction(_prev: ActionState, formData: FormData): Prom
   if (!parsed.success) return { error: "Indique une décision et une justification." };
   try {
     const { minutes, ...rest } = parsed.data;
-    decideSession(getDb(), admin.id, minutes === undefined ? rest : { ...rest, minutes });
+    await decideSession(getDb(), admin.id, minutes === undefined ? rest : { ...rest, minutes });
   } catch (e) {
     return toState(e);
   }
@@ -53,7 +53,7 @@ export async function createUserAction(
   if (!parsed.success)
     return { error: "Nom, e-mail valide et mot de passe (8 caractères min.) requis." };
   try {
-    createUser(getDb(), admin.id, parsed.data);
+    await createUser(getDb(), admin.id, parsed.data);
   } catch (e) {
     return toState(e);
   }
@@ -68,7 +68,7 @@ export async function toggleUserAction(formData: FormData): Promise<void> {
   const parsed = idSchema
     .extend({ active: z.enum(["true", "false"]) })
     .parse(Object.fromEntries(formData));
-  setUserActive(getDb(), admin.id, parsed.id, parsed.active === "true");
+  await setUserActive(getDb(), admin.id, parsed.id, parsed.active === "true");
   revalidatePath("/admin/users");
 }
 
@@ -79,7 +79,7 @@ export async function linkAction(_prev: ActionState, formData: FormData): Promis
     .safeParse(Object.fromEntries(formData));
   if (!parsed.success) return INVALID_INPUT;
   try {
-    linkTutorTutee(getDb(), admin.id, parsed.data.tutorId, parsed.data.tuteeId);
+    await linkTutorTutee(getDb(), admin.id, parsed.data.tutorId, parsed.data.tuteeId);
   } catch (e) {
     return toState(e);
   }
@@ -89,7 +89,7 @@ export async function linkAction(_prev: ActionState, formData: FormData): Promis
 
 export async function unlinkAction(formData: FormData): Promise<void> {
   const admin = await requireRole("ADMIN");
-  unlinkTutorTutee(getDb(), admin.id, idSchema.parse(Object.fromEntries(formData)).id);
+  await unlinkTutorTutee(getDb(), admin.id, idSchema.parse(Object.fromEntries(formData)).id);
   revalidatePath("/admin/relationships");
 }
 
@@ -103,7 +103,7 @@ export async function addSubjectAction(
     .safeParse(Object.fromEntries(formData));
   if (!parsed.success) return INVALID_INPUT;
   try {
-    addSubject(getDb(), admin.id, parsed.data.name);
+    await addSubject(getDb(), admin.id, parsed.data.name);
   } catch (e) {
     return toState(e);
   }
@@ -116,6 +116,6 @@ export async function closeAnomalyAction(formData: FormData): Promise<void> {
   const parsed = idSchema
     .extend({ status: z.enum(["RESOLVED", "DISMISSED"]) })
     .parse(Object.fromEntries(formData));
-  closeAnomaly(getDb(), admin.id, parsed.id, parsed.status);
+  await closeAnomaly(getDb(), admin.id, parsed.id, parsed.status);
   revalidatePath("/admin", "layout");
 }

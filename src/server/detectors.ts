@@ -19,8 +19,8 @@ function windowOf(s: SessionRow): SessionWindow {
   };
 }
 
-function detectOverlaps(x: Executor, session: SessionRow, now: Date): void {
-  const others = x
+async function detectOverlaps(x: Executor, session: SessionRow, now: Date): Promise<void> {
+  const others = await x
     .select()
     .from(sessions)
     .where(
@@ -30,8 +30,7 @@ function detectOverlaps(x: Executor, session: SessionRow, now: Date): void {
         ne(sessions.status, "REFUSED"),
         or(eq(sessions.tutorId, session.tutorId), eq(sessions.tuteeId, session.tuteeId)),
       ),
-    )
-    .all();
+    );
   const mine = windowOf(session);
   for (const other of others) {
     if (!cannotBothFit(mine, windowOf(other))) continue;
@@ -40,7 +39,7 @@ function detectOverlaps(x: Executor, session: SessionRow, now: Date): void {
       sameTutor && other.tuteeId !== session.tuteeId
         ? "TUTOR_MULTIPLE_TUTEES"
         : "OVERLAPPING_SESSIONS";
-    raiseAnomaly(
+    await raiseAnomaly(
       x,
       {
         type,
@@ -54,8 +53,8 @@ function detectOverlaps(x: Executor, session: SessionRow, now: Date): void {
   }
 }
 
-function detectFrequency(x: Executor, session: SessionRow, now: Date): void {
-  const recent = x
+async function detectFrequency(x: Executor, session: SessionRow, now: Date): Promise<void> {
+  const recent = await x
     .select()
     .from(sessions)
     .where(
@@ -65,14 +64,13 @@ function detectFrequency(x: Executor, session: SessionRow, now: Date): void {
         ne(sessions.status, "REFUSED"),
         gte(sessions.tutorDeclaredAt, new Date(now.getTime() - 7 * DAY_MS)),
       ),
-    )
-    .all();
+    );
   const lastDay = recent.filter(
     (s) => (s.tutorDeclaredAt?.getTime() ?? 0) >= now.getTime() - DAY_MS,
   );
   const weekMinutes = recent.reduce((sum, s) => sum + (s.tutorDurationMin ?? 0), 0);
   if (lastDay.length > MAX_SESSIONS_PER_DAY || weekMinutes > MAX_MINUTES_PER_WEEK) {
-    raiseAnomaly(
+    await raiseAnomaly(
       x,
       {
         type: "FREQUENT_SESSIONS",
@@ -86,9 +84,13 @@ function detectFrequency(x: Executor, session: SessionRow, now: Date): void {
   }
 }
 
-export function runDeclarationDetectors(x: Executor, session: SessionRow, now: Date): void {
+export async function runDeclarationDetectors(
+  x: Executor,
+  session: SessionRow,
+  now: Date,
+): Promise<void> {
   if ((session.tutorDurationMin ?? 0) > LONG_SESSION_MIN) {
-    raiseAnomaly(
+    await raiseAnomaly(
       x,
       {
         type: "SESSION_TOO_LONG",
@@ -100,6 +102,6 @@ export function runDeclarationDetectors(x: Executor, session: SessionRow, now: D
       now,
     );
   }
-  detectOverlaps(x, session, now);
-  detectFrequency(x, session, now);
+  await detectOverlaps(x, session, now);
+  await detectFrequency(x, session, now);
 }

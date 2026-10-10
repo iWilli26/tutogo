@@ -11,14 +11,14 @@ export interface Credentials {
 }
 
 export interface AuthProvider {
-  authenticate(db: Db, credentials: Credentials): AuthUser | null;
+  authenticate(db: Db, credentials: Credentials): Promise<AuthUser | null>;
 }
 
 const DUMMY_HASH = hashPassword("dummy-password-for-timing");
 
 export const localPasswordProvider: AuthProvider = {
-  authenticate(db, { email, password }) {
-    const user = db.select().from(users).where(eq(users.email, email.trim().toLowerCase())).get();
+  async authenticate(db, { email, password }) {
+    const [user] = await db.select().from(users).where(eq(users.email, email.trim().toLowerCase()));
     if (!user) {
       verifyPassword(password, DUMMY_HASH);
       return null;

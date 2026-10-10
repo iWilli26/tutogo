@@ -3,8 +3,8 @@ import { formatDate } from "@/components/SessionRow";
 import { Card } from "@/components/ui";
 import { listAuditLogs } from "@/server/queries";
 
-export default function AuditPage() {
-  const logs = listAuditLogs(getDb());
+export default async function AuditPage() {
+  const logs = await listAuditLogs(getDb());
   return (
     <Card>
       <h1 className="mb-4 text-2xl font-extrabold">Journal des actions</h1>

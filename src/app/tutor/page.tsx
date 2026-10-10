@@ -10,8 +10,8 @@ import { getTutorTotals } from "@/server/stats";
 export default async function TutorHome() {
   const tutor = await requireRole("TUTOR");
   const db = getDb();
-  const totals = getTutorTotals(db, tutor.id);
-  const recent = listSessionViews(db, { tutorId: tutor.id, limit: 6 });
+  const totals = await getTutorTotals(db, tutor.id);
+  const recent = await listSessionViews(db, { tutorId: tutor.id, limit: 6 });
   const open = recent.filter((v) => v.session.tutorDeclaredAt === null);
 
   return (

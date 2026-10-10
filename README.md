@@ -7,14 +7,25 @@ Suivi des séances de tutorat bénévole du CIMF. Les téléphones ne servent qu
 ```bash
 nvm use            # Node 24 (>= 22 requis)
 npm install
-npm run setup      # crée data/tutogo.db et les comptes de démonstration
+cp .env.example .env.local   # puis renseigner DATABASE_URL (chaîne de connexion Neon)
+npm run setup      # applique les migrations et crée les comptes de démonstration
 npm run dev        # http://localhost:3000
 ```
 
 Tous les comptes de démonstration ont le mot de passe `tutogo-demo` (boutons sur la page de connexion, hors production) :
 Amandine, Sarah, Maya (tuteurs) · Emma, Lucas, Chloé (tutorés) · `admin@cimf.test` (admin).
 
-En production : définir `SESSION_SECRET` (chaîne aléatoire de 32+ octets).
+En production : définir `SESSION_SECRET` (chaîne aléatoire de 32+ octets) et `DATABASE_URL`.
+
+## Base de données (Neon)
+
+PostgreSQL hébergé sur [Neon](https://neon.tech). Neon n'héberge que la base : l'application Next.js se déploie ailleurs (Vercel, par exemple).
+
+1. Créer un projet Neon et copier la chaîne de connexion « pooled » (hôte en `-pooler`) dans `DATABASE_URL`.
+2. `npm run db:migrate` applique les migrations de `drizzle/` (à relancer à chaque déploiement qui en ajoute).
+3. `npm run setup` ajoute en plus les comptes de démonstration si la base est vide.
+
+Après une modification de `src/db/schema.ts` : `npm run db:generate`. Les tests tournent sur PGlite (PostgreSQL embarqué), sans connexion à Neon.
 
 Vérifications : `npm run typecheck`, `npm run lint`, `npm test`.
 
@@ -28,9 +39,8 @@ Vérifications : `npm run typecheck`, `npm run lint`, `npm test`.
 
 ## Architecture
 
-Next.js (App Router) + TypeScript + Tailwind, server actions, SQLite via Drizzle (`better-sqlite3`).
-SQLite plutôt que PostgreSQL pour un prototype lançable sans installation ; le schéma Drizzle se porte vers
-PostgreSQL en changeant le dialecte. Les triggers d'immutabilité (`drizzle/0001_*.sql`) devront alors être réécrits en PL/pgSQL.
+Next.js (App Router) + TypeScript + Tailwind, server actions, PostgreSQL (Neon) via Drizzle (`pg`).
+Les triggers d'immutabilité sont en PL/pgSQL (`drizzle/0001_*.sql`).
 
 - `src/db/schema.ts` : Users, TutorProfiles, TuteeProfiles, Subjects, TutorTuteeRelationships, Sessions, SessionConfirmations, Anomalies, AuditLogs.
 - `src/server/sessions.ts` : préparer, déclarer, confirmer, décision admin (toute la logique de confiance est ici, côté serveur).

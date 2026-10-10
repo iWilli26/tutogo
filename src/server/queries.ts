@@ -1,4 +1,4 @@
-import { alias } from "drizzle-orm/sqlite-core";
+import { alias } from "drizzle-orm/pg-core";
 import { and, desc, eq, inArray, isNull, lt, type SQL } from "drizzle-orm";
 import type { Db } from "@/db/client";
 import {
@@ -24,7 +24,7 @@ export interface SessionFilter {
   limit?: number;
 }
 
-export function listSessionViews(db: Db, filter: SessionFilter = {}) {
+export async function listSessionViews(db: Db, filter: SessionFilter = {}) {
   const conditions: SQL[] = [];
   if (filter.tutorId) conditions.push(eq(sessions.tutorId, filter.tutorId));
   if (filter.tuteeId) conditions.push(eq(sessions.tuteeId, filter.tuteeId));
@@ -47,13 +47,12 @@ export function listSessionViews(db: Db, filter: SessionFilter = {}) {
     .leftJoin(sessionConfirmations, eq(sessionConfirmations.sessionId, sessions.id))
     .where(and(...conditions))
     .orderBy(desc(sessions.createdAt))
-    .limit(filter.limit ?? 200)
-    .all();
+    .limit(filter.limit ?? 200);
 }
 
-export type SessionView = ReturnType<typeof listSessionViews>[number];
+export type SessionView = Awaited<ReturnType<typeof listSessionViews>>[number];
 
-export function listTuteesOf(db: Db, tutorId: string) {
+export async function listTuteesOf(db: Db, tutorId: string) {
   return db
     .select({ id: users.id, name: users.name })
     .from(tutorTuteeRelationships)
@@ -65,30 +64,28 @@ export function listTuteesOf(db: Db, tutorId: string) {
         eq(users.active, true),
       ),
     )
-    .orderBy(users.name)
-    .all();
+    .orderBy(users.name);
 }
 
-export function listSubjects(db: Db) {
-  return db.select().from(subjects).orderBy(subjects.name).all();
+export async function listSubjects(db: Db) {
+  return db.select().from(subjects).orderBy(subjects.name);
 }
 
-export function listAnomalyViews(db: Db, status?: "OPEN") {
+export async function listAnomalyViews(db: Db, status?: "OPEN") {
   return db
     .select({ anomaly: anomalies, userName: users.name })
     .from(anomalies)
     .leftJoin(users, eq(users.id, anomalies.userId))
     .where(status ? eq(anomalies.status, status) : undefined)
     .orderBy(desc(anomalies.createdAt))
-    .limit(300)
-    .all();
+    .limit(300);
 }
 
-export function listUsers(db: Db) {
-  return db.select().from(users).orderBy(users.role, users.name).all();
+export async function listUsers(db: Db) {
+  return db.select().from(users).orderBy(users.role, users.name);
 }
 
-export function listRelationships(db: Db) {
+export async function listRelationships(db: Db) {
   const tutor = alias(users, "rel_tutor");
   const tutee = alias(users, "rel_tutee");
   return db
@@ -101,27 +98,25 @@ export function listRelationships(db: Db) {
     .from(tutorTuteeRelationships)
     .innerJoin(tutor, eq(tutor.id, tutorTuteeRelationships.tutorId))
     .innerJoin(tutee, eq(tutee.id, tutorTuteeRelationships.tuteeId))
-    .orderBy(tutor.name, tutee.name)
-    .all();
+    .orderBy(tutor.name, tutee.name);
 }
 
-export function listAuditLogs(db: Db, limit = 200) {
+export async function listAuditLogs(db: Db, limit = 200) {
   return db
     .select({ log: auditLogs, actorName: users.name })
     .from(auditLogs)
     .leftJoin(users, eq(users.id, auditLogs.actorId))
     .orderBy(desc(auditLogs.id))
-    .limit(limit)
-    .all();
+    .limit(limit);
 }
 
 const HOUR_MS = 3_600_000;
 const NEVER_DECLARED_AFTER_MS = 24 * HOUR_MS;
 const NEVER_CONFIRMED_AFTER_MS = 72 * HOUR_MS;
 
-export function scanStaleSessions(db: Db, now = new Date()): void {
-  db.transaction((tx) => {
-    const undeclared = tx
+export async function scanStaleSessions(db: Db, now = new Date()): Promise<void> {
+  await db.transaction(async (tx) => {
+    const undeclared = await tx
       .select()
       .from(sessions)
       .where(
@@ -130,10 +125,9 @@ export function scanStaleSessions(db: Db, now = new Date()): void {
           isNull(sessions.tutorDeclaredAt),
           lt(sessions.createdAt, new Date(now.getTime() - NEVER_DECLARED_AFTER_MS)),
         ),
-      )
-      .all();
+      );
     for (const s of undeclared) {
-      raiseAnomaly(
+      await raiseAnomaly(
         tx,
         {
           type: "SESSION_NEVER_COMPLETED",
@@ -145,7 +139,7 @@ export function scanStaleSessions(db: Db, now = new Date()): void {
         now,
       );
     }
-    const unconfirmed = tx
+    const unconfirmed = await tx
       .select()
       .from(sessions)
       .leftJoin(sessionConfirmations, eq(sessionConfirmations.sessionId, sessions.id))
@@ -155,10 +149,9 @@ export function scanStaleSessions(db: Db, now = new Date()): void {
           isNull(sessionConfirmations.id),
           lt(sessions.tutorDeclaredAt, new Date(now.getTime() - NEVER_CONFIRMED_AFTER_MS)),
         ),
-      )
-      .all();
+      );
     for (const { sessions: s } of unconfirmed) {
-      raiseAnomaly(
+      await raiseAnomaly(
         tx,
         {
           type: "SESSION_NEVER_COMPLETED",

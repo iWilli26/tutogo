@@ -13,7 +13,8 @@ import { confirmSession, declareSession, prepareSession } from "@/server/session
 
 const db = getDb();
 
-if (db.select().from(users).limit(1).get()) {
+const [anyUser] = await db.select().from(users).limit(1);
+if (anyUser) {
   console.log("La base contient déjà des données : seed ignoré.");
   process.exit(0);
 }
@@ -23,18 +24,18 @@ const passwordHash = hashPassword(DEMO_PASSWORD);
 for (const account of DEMO_ACCOUNTS) {
   const id = randomUUID();
   ids.set(account.name, id);
-  db.insert(users)
-    .values({ id, email: account.email, name: account.name, role: account.role, passwordHash })
-    .run();
-  if (account.role === "TUTOR") db.insert(tutorProfiles).values({ userId: id }).run();
-  if (account.role === "TUTEE") db.insert(tuteeProfiles).values({ userId: id }).run();
+  await db
+    .insert(users)
+    .values({ id, email: account.email, name: account.name, role: account.role, passwordHash });
+  if (account.role === "TUTOR") await db.insert(tutorProfiles).values({ userId: id });
+  if (account.role === "TUTEE") await db.insert(tuteeProfiles).values({ userId: id });
 }
 
 const subjectIds = new Map<string, string>();
 for (const name of ["Mathématiques", "Physique", "Chimie", "Français", "Anglais", "Informatique"]) {
   const id = randomUUID();
   subjectIds.set(name, id);
-  db.insert(subjects).values({ id, name }).run();
+  await db.insert(subjects).values({ id, name });
 }
 
 const get = (map: Map<string, string>, key: string): string => {
@@ -49,9 +50,9 @@ for (const [tutor, tutee] of [
   ["Sarah", "Lucas"],
   ["Maya", "Chloé"],
 ] as const) {
-  db.insert(tutorTuteeRelationships)
-    .values({ id: randomUUID(), tutorId: get(ids, tutor), tuteeId: get(ids, tutee) })
-    .run();
+  await db
+    .insert(tutorTuteeRelationships)
+    .values({ id: randomUUID(), tutorId: get(ids, tutor), tuteeId: get(ids, tutee) });
 }
 
 const DAY = 86_400_000;
@@ -65,19 +66,19 @@ const history = [
 const base = Date.now();
 for (const [tutor, tutee, subject, minutes, bucket, daysAgo] of history) {
   const start = new Date(base - daysAgo * DAY);
-  const { session } = prepareSession(
+  const { session } = await prepareSession(
     db,
     get(ids, tutor),
     { tuteeId: get(ids, tutee), subjectId: get(subjectIds, subject) },
     start,
   );
-  declareSession(
+  await declareSession(
     db,
     get(ids, tutor),
     { code: session.code, durationMin: minutes },
     new Date(start.getTime() + (minutes + 10) * 60_000),
   );
-  confirmSession(
+  await confirmSession(
     db,
     get(ids, tutee),
     { sessionId: session.id, participated: true, bucket },
@@ -88,3 +89,4 @@ for (const [tutor, tutee, subject, minutes, bucket, daysAgo] of history) {
 console.log(
   `Base initialisée. Mot de passe de tous les comptes de démonstration : ${DEMO_PASSWORD}`,
 );
+process.exit(0);

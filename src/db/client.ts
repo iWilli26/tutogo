@@ -1,25 +1,25 @@
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import type { ExtractTablesWithRelations } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import type { PgDatabase, PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg-core";
+import { Pool } from "pg";
 import * as schema from "@/db/schema";
 
-export type Db = ReturnType<typeof createDb>;
+type Schema = typeof schema;
 
-export function createDb(path: string) {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  const sqlite = new Database(path);
-  sqlite.pragma("journal_mode = WAL");
-  sqlite.pragma("foreign_keys = ON");
-  const db = drizzle(sqlite, { schema });
-  migrate(db, { migrationsFolder: resolve(process.cwd(), "drizzle") });
-  return db;
+export type Db = PgDatabase<PgQueryResultHKT, Schema>;
+export type Tx = PgTransaction<PgQueryResultHKT, Schema, ExtractTablesWithRelations<Schema>>;
+
+export function createPool(): Pool {
+  const connectionString = process.env["DATABASE_URL"];
+  if (!connectionString) {
+    throw new Error("DATABASE_URL must be set (Neon connection string, see .env.example).");
+  }
+  return new Pool({ connectionString });
 }
 
 const globalForDb = globalThis as unknown as { tutogoDb?: Db };
 
 export function getDb(): Db {
-  globalForDb.tutogoDb ??= createDb(process.env["DATABASE_PATH"] ?? "data/tutogo.db");
+  globalForDb.tutogoDb ??= drizzle(createPool(), { schema });
   return globalForDb.tutogoDb;
 }

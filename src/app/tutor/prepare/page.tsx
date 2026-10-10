@@ -7,7 +7,8 @@ import { listSubjects, listTuteesOf } from "@/server/queries";
 export default async function PreparePage() {
   const tutor = await requireRole("TUTOR");
   const db = getDb();
-  const tutees = listTuteesOf(db, tutor.id);
+  const tutees = await listTuteesOf(db, tutor.id);
+  const subjects = await listSubjects(db);
   return (
     <Card>
       <h1 className="mb-5 text-2xl font-extrabold">Préparer une séance</h1>
@@ -16,7 +17,7 @@ export default async function PreparePage() {
           Aucun tutoré ne t'est associé pour le moment. Contacte un responsable TutoGO.
         </p>
       ) : (
-        <PrepareForm tutees={tutees} subjects={listSubjects(db)} />
+        <PrepareForm tutees={tutees} subjects={subjects} />
       )}
     </Card>
   );

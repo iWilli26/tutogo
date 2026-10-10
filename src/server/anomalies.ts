@@ -11,9 +11,9 @@ export interface AnomalyInput {
   userId?: string;
 }
 
-export function raiseAnomaly(x: Executor, input: AnomalyInput, now: Date): boolean {
+export async function raiseAnomaly(x: Executor, input: AnomalyInput, now: Date): Promise<boolean> {
   const id = randomUUID();
-  const inserted = x
+  const inserted = await x
     .insert(anomalies)
     .values({
       id,
@@ -25,9 +25,9 @@ export function raiseAnomaly(x: Executor, input: AnomalyInput, now: Date): boole
       createdAt: now,
     })
     .onConflictDoNothing()
-    .run();
-  if (inserted.changes === 0) return false;
-  logAudit(
+    .returning({ id: anomalies.id });
+  if (inserted.length === 0) return false;
+  await logAudit(
     x,
     {
       actorId: null,
@@ -45,6 +45,5 @@ export function openAnomaliesForSession(x: Executor, sessionId: string) {
   return x
     .select()
     .from(anomalies)
-    .where(and(eq(anomalies.sessionId, sessionId), eq(anomalies.status, "OPEN")))
-    .all();
+    .where(and(eq(anomalies.sessionId, sessionId), eq(anomalies.status, "OPEN")));
 }

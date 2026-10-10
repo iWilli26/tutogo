@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, sql, type SQLWrapper } from "drizzle-orm";
 import type { Db } from "@/db/client";
 import { anomalies, sessions, users } from "@/db/schema";
 
@@ -10,21 +10,20 @@ export function startOfWeek(now: Date): Date {
   return d;
 }
 
-export function getTutorTotals(db: Db, tutorId: string, now = new Date()) {
+// Postgres returns sum()/count() as bigint, which the driver hands back as a string.
+const rowCount = sql`count(*)`.mapWith(Number);
+const minutesSum = (expr: SQLWrapper) => sql`coalesce(sum(${expr}), 0)`.mapWith(Number);
+
+export async function getTutorTotals(db: Db, tutorId: string, now = new Date()) {
   const validated = and(eq(sessions.tutorId, tutorId), eq(sessions.status, "VALIDATED"));
-  const total = db
-    .select({
-      minutes: sql<number>`coalesce(sum(${sessions.validatedMinutes}), 0)`,
-      count: sql<number>`count(*)`,
-    })
+  const [total] = await db
+    .select({ minutes: minutesSum(sessions.validatedMinutes), count: rowCount })
     .from(sessions)
-    .where(validated)
-    .get();
-  const week = db
-    .select({ minutes: sql<number>`coalesce(sum(${sessions.validatedMinutes}), 0)` })
+    .where(validated);
+  const [week] = await db
+    .select({ minutes: minutesSum(sessions.validatedMinutes) })
     .from(sessions)
-    .where(and(validated, gte(sessions.createdAt, startOfWeek(now))))
-    .get();
+    .where(and(validated, gte(sessions.createdAt, startOfWeek(now))));
   return {
     validatedMinutes: total?.minutes ?? 0,
     validatedCount: total?.count ?? 0,
@@ -33,58 +32,55 @@ export function getTutorTotals(db: Db, tutorId: string, now = new Date()) {
 }
 
 export function getLeaderboard(db: Db) {
+  const minutes = minutesSum(
+    sql`case when ${sessions.status} = 'VALIDATED' then ${sessions.validatedMinutes} else 0 end`,
+  );
   return db
-    .select({
-      tutorId: users.id,
-      name: users.name,
-      minutes: sql<number>`coalesce(sum(case when ${sessions.status} = 'VALIDATED' then ${sessions.validatedMinutes} else 0 end), 0)`,
-    })
+    .select({ tutorId: users.id, name: users.name, minutes })
     .from(users)
     .leftJoin(sessions, eq(sessions.tutorId, users.id))
     .where(and(eq(users.role, "TUTOR"), eq(users.active, true)))
     .groupBy(users.id)
-    .orderBy(desc(sql`2 + 0`), users.name)
-    .all();
+    .orderBy(desc(minutes), users.name);
 }
 
-export function getAdminStats(db: Db) {
-  const countRole = (role: "TUTOR" | "TUTEE") =>
-    db
-      .select({ n: sql<number>`count(*)` })
+export async function getAdminStats(db: Db) {
+  const countRole = async (role: "TUTOR" | "TUTEE") => {
+    const [row] = await db
+      .select({ n: rowCount })
       .from(users)
-      .where(and(eq(users.role, role), eq(users.active, true)))
-      .get()?.n ?? 0;
-  const declaredMinutes = (statuses: ("PENDING" | "TO_REVIEW" | "VALIDATED" | "REFUSED")[]) =>
-    db
-      .select({ m: sql<number>`coalesce(sum(${sessions.tutorDurationMin}), 0)` })
+      .where(and(eq(users.role, role), eq(users.active, true)));
+    return row?.n ?? 0;
+  };
+  const declaredMinutes = async (
+    statuses: ("PENDING" | "TO_REVIEW" | "VALIDATED" | "REFUSED")[],
+  ) => {
+    const [row] = await db
+      .select({ m: minutesSum(sessions.tutorDurationMin) })
       .from(sessions)
-      .where(and(isNotNull(sessions.tutorDeclaredAt), inArray(sessions.status, statuses)))
-      .get()?.m ?? 0;
-  const sessionCount = (where?: ReturnType<typeof eq>) =>
-    db
-      .select({ n: sql<number>`count(*)` })
-      .from(sessions)
-      .where(where)
-      .get()?.n ?? 0;
-  const validatedMinutes =
-    db
-      .select({ m: sql<number>`coalesce(sum(${sessions.validatedMinutes}), 0)` })
-      .from(sessions)
-      .where(eq(sessions.status, "VALIDATED"))
-      .get()?.m ?? 0;
+      .where(and(isNotNull(sessions.tutorDeclaredAt), inArray(sessions.status, statuses)));
+    return row?.m ?? 0;
+  };
+  const sessionCount = async (where?: ReturnType<typeof eq>) => {
+    const [row] = await db.select({ n: rowCount }).from(sessions).where(where);
+    return row?.n ?? 0;
+  };
+  const [validated] = await db
+    .select({ m: minutesSum(sessions.validatedMinutes) })
+    .from(sessions)
+    .where(eq(sessions.status, "VALIDATED"));
+  const [open] = await db
+    .select({ n: rowCount })
+    .from(anomalies)
+    .where(eq(anomalies.status, "OPEN"));
   return {
-    tutors: countRole("TUTOR"),
-    tutees: countRole("TUTEE"),
-    sessions: sessionCount(),
-    totalMinutes: declaredMinutes(["PENDING", "TO_REVIEW", "VALIDATED"]),
-    validatedMinutes,
-    pendingMinutes: declaredMinutes(["PENDING", "TO_REVIEW"]),
-    flaggedSessions: sessionCount(eq(sessions.status, "TO_REVIEW")),
-    openAnomalies:
-      db
-        .select({ n: sql<number>`count(*)` })
-        .from(anomalies)
-        .where(eq(anomalies.status, "OPEN"))
-        .get()?.n ?? 0,
+    tutors: await countRole("TUTOR"),
+    tutees: await countRole("TUTEE"),
+    sessions: await sessionCount(),
+    totalMinutes: await declaredMinutes(["PENDING", "TO_REVIEW", "VALIDATED"]),
+    validatedMinutes: validated?.m ?? 0,
+    pendingMinutes: await declaredMinutes(["PENDING", "TO_REVIEW"]),
+    flaggedSessions: await sessionCount(eq(sessions.status, "TO_REVIEW")),
+    openAnomalies: open?.n ?? 0,
   };
 }

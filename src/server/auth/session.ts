@@ -65,7 +65,7 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   if (!token) return null;
   const userId = readToken(token);
   if (!userId) return null;
-  const user = getDb().select().from(users).where(eq(users.id, userId)).get();
+  const [user] = await getDb().select().from(users).where(eq(users.id, userId));
   return user?.active ? user : null;
 }
 

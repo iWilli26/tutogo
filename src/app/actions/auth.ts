@@ -12,7 +12,7 @@ const loginSchema = z.object({ email: z.email(), password: z.string().min(1) });
 export async function login(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const parsed = loginSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "E-mail ou mot de passe invalide." };
-  const user = authProvider.authenticate(getDb(), parsed.data);
+  const user = await authProvider.authenticate(getDb(), parsed.data);
   if (!user) return { error: "E-mail ou mot de passe incorrect." };
   await startSession(user.id);
   redirect(HOME_BY_ROLE[user.role]);

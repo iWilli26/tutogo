@@ -19,7 +19,7 @@ export async function confirmAction(_prev: ActionState, formData: FormData): Pro
   const parsed = confirmSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return INVALID_INPUT;
   try {
-    confirmSession(getDb(), tutee.id, {
+    await confirmSession(getDb(), tutee.id, {
       sessionId: parsed.data.sessionId,
       participated: parsed.data.participated === "yes",
       bucket: parsed.data.bucket ?? null,

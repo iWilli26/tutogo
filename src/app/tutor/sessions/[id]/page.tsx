@@ -10,7 +10,7 @@ import { listSessionViews } from "@/server/queries";
 export default async function TutorSessionPage({ params }: { params: Promise<{ id: string }> }) {
   const tutor = await requireRole("TUTOR");
   const { id } = await params;
-  const view = listSessionViews(getDb(), { tutorId: tutor.id, sessionId: id })[0];
+  const [view] = await listSessionViews(getDb(), { tutorId: tutor.id, sessionId: id });
   if (!view) notFound();
   const { session } = view;
 

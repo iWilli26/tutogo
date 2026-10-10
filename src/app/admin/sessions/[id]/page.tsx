@@ -18,11 +18,11 @@ const COMPARISON_LABEL = {
 export default async function AdminSessionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const db = getDb();
-  const view = listSessionViews(db, { sessionId: id })[0];
+  const [view] = await listSessionViews(db, { sessionId: id });
   if (!view) notFound();
   const { session } = view;
-  const sessionAnomalies = listAnomalyViews(db).filter((a) => a.anomaly.sessionId === id);
-  const history = db.select().from(auditLogs).where(eq(auditLogs.entityId, id)).all();
+  const sessionAnomalies = (await listAnomalyViews(db)).filter((a) => a.anomaly.sessionId === id);
+  const history = await db.select().from(auditLogs).where(eq(auditLogs.entityId, id));
   const bucketMax = view.tuteeBucket ? BUCKET_RANGES[view.tuteeBucket].max : Infinity;
   const suggested = Math.min(session.tutorDurationMin ?? 0, bucketMax);
 
